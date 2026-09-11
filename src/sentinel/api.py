@@ -37,6 +37,15 @@ def _resolve_web_index() -> Path:
     return candidates[0].resolve()
 
 
+def _configured_signing_key() -> str | None:
+    value = os.getenv("SENTINEL_SIGNING_KEY", "").strip()
+    if not value:
+        return None
+    if len(value.encode("utf-8")) < 32:
+        raise RuntimeError("SENTINEL_SIGNING_KEY must contain at least 32 bytes when configured")
+    return value
+
+
 class PolicyInput(BaseModel):
     require_json: bool = False
     required_json_fields: list[str] = Field(default_factory=list, max_length=64)
@@ -90,7 +99,7 @@ def _artifact_sha256(artifact: str) -> str:
 
 def create_app(store: ReceiptStore | None = None) -> FastAPI:
     receipt_store = store or ReceiptStore(os.getenv("SENTINEL_DB_PATH", "sentinel.db"))
-    signing_key = os.getenv("SENTINEL_SIGNING_KEY", "").strip() or None
+    signing_key = _configured_signing_key()
     verifier = SchemaSentinelVerifier(signing_key=signing_key)
     web_index = _resolve_web_index()
 
