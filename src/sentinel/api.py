@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import uuid
@@ -12,7 +13,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from sentinel.core import VerificationPolicy, VerificationRequest
+from sentinel.core import VerificationPolicy, VerificationRequest, Verdict
+from sentinel.receipt_codec import receipt_from_dict, serialized_receipt_is_valid
 from sentinel.schema_verifier import SchemaSentinelVerifier
 from sentinel.store import ReceiptStore
 
@@ -42,6 +44,12 @@ class VerifyInput(BaseModel):
     parent_receipt_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
+class GateInput(BaseModel):
+    receipt_id: str = Field(pattern=r"^ser_[0-9a-f]{20}$")
+    artifact: str = Field(max_length=128_000)
+    require_signed: bool = True
+
+
 async def require_api_token(
     authorization: Annotated[str | None, Header()] = None,
 ) -> None:
@@ -61,6 +69,10 @@ def _arena_price() -> int:
     return price if 1 <= price <= 100 else 20
 
 
+def _artifact_sha256(artifact: str) -> str:
+    return hashlib.sha256(artifact.encode("utf-8")).hexdigest()
+
+
 def create_app(store: ReceiptStore | None = None) -> FastAPI:
     receipt_store = store or ReceiptStore(os.getenv("SENTINEL_DB_PATH", "sentinel.db"))
     signing_key = os.getenv("SENTINEL_SIGNING_KEY", "").strip() or None
@@ -71,9 +83,10 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
         summary="Verify before agents act.",
         description=(
             "Pre-execution verification for autonomous-agent artifacts. "
-            "Sentinel produces deterministic PASS/WARN/BLOCK verdicts and evidence receipts."
+            "Sentinel produces deterministic PASS/WARN/BLOCK verdicts, evidence receipts, "
+            "and proof-before-action execution gates."
         ),
-        version="0.2.0",
+        version="0.3.0",
         redoc_url=None,
     )
 
@@ -95,6 +108,7 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
             "verifier": verifier.VERSION,
             "signed_receipts": signing_key is not None,
             "json_schema": True,
+            "proof_before_action": True,
         }
 
     @app.get("/v1/service", tags=["system"])
@@ -127,6 +141,10 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
                 "artifact_sha256": "SHA-256",
                 "contract_sha256": "SHA-256",
                 "expires_at": "ISO-8601",
+            },
+            "execution_gate": {
+                "endpoint": "/v1/gate",
+                "rule": "Only an intact, current PASS receipt for the exact artifact may return ALLOW.",
             },
         }
 
@@ -161,6 +179,85 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
 
         receipt_store.save(receipt)
         return receipt.to_dict()
+
+    @app.post(
+        "/v1/gate",
+        tags=["execution"],
+        dependencies=[Depends(require_api_token)],
+    )
+    def gate(payload: GateInput) -> dict:
+        stored = receipt_store.get(payload.receipt_id)
+        if stored is None:
+            return {
+                "decision": "BLOCK",
+                "receipt_id": payload.receipt_id,
+                "reasons": ["Receipt not found"],
+                "receipt_integrity": False,
+                "receipt_current": False,
+                "artifact_matches": False,
+                "receipt_verdict": None,
+                "signed_receipt": False,
+            }
+
+        try:
+            receipt = receipt_from_dict(stored)
+        except (KeyError, TypeError, ValueError):
+            return {
+                "decision": "BLOCK",
+                "receipt_id": payload.receipt_id,
+                "reasons": ["Stored receipt cannot be decoded"],
+                "receipt_integrity": False,
+                "receipt_current": False,
+                "artifact_matches": False,
+                "receipt_verdict": None,
+                "signed_receipt": False,
+            }
+
+        integrity_key = signing_key if receipt.signature_hmac_sha256 is not None else None
+        integrity = serialized_receipt_is_valid(
+            stored,
+            signing_key=integrity_key,
+            require_current=False,
+        )
+        current = serialized_receipt_is_valid(
+            stored,
+            signing_key=integrity_key,
+            require_current=True,
+        )
+        artifact_matches = secrets.compare_digest(
+            receipt.artifact_sha256,
+            _artifact_sha256(payload.artifact),
+        )
+        signed = receipt.signature_hmac_sha256 is not None
+
+        reasons: list[str] = []
+        if not integrity:
+            reasons.append("Receipt integrity verification failed")
+        if not current:
+            reasons.append("Receipt is expired or invalid")
+        if not artifact_matches:
+            reasons.append("Artifact hash does not match the verified artifact")
+        if receipt.verdict is not Verdict.PASS:
+            reasons.append(f"Receipt verdict is {receipt.verdict.value}, not PASS")
+        if payload.require_signed and not signed:
+            reasons.append("A signed receipt is required for this gate")
+        if signed and signing_key is None:
+            reasons.append("Signing key is unavailable to authenticate the receipt")
+
+        decision = "ALLOW" if not reasons else "BLOCK"
+        return {
+            "decision": decision,
+            "receipt_id": receipt.receipt_id,
+            "reasons": reasons,
+            "receipt_integrity": integrity,
+            "receipt_current": current,
+            "artifact_matches": artifact_matches,
+            "receipt_verdict": receipt.verdict.value,
+            "signed_receipt": signed,
+            "artifact_sha256": receipt.artifact_sha256,
+            "contract_sha256": receipt.contract_sha256,
+            "expires_at": receipt.expires_at,
+        }
 
     @app.get(
         "/v1/receipts",
