@@ -51,6 +51,14 @@ async def require_api_token(
         raise HTTPException(status_code=401, detail="Missing or invalid Sentinel API token")
 
 
+def _arena_price() -> int:
+    try:
+        price = int(os.getenv("SENTINEL_ARENA_PRICE", "20"))
+    except ValueError:
+        return 20
+    return price if 1 <= price <= 100 else 20
+
+
 def create_app(store: ReceiptStore | None = None) -> FastAPI:
     receipt_store = store or ReceiptStore(os.getenv("SENTINEL_DB_PATH", "sentinel.db"))
     signing_key = os.getenv("SENTINEL_SIGNING_KEY", "").strip() or None
@@ -84,6 +92,39 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
             "service": "agentforge-sentinel",
             "verifier": verifier.VERSION,
             "signed_receipts": signing_key is not None,
+        }
+
+    @app.get("/v1/service", tags=["system"])
+    def service_descriptor() -> dict:
+        return {
+            "name": "verify_agent_output",
+            "product": "AgentForge Sentinel",
+            "tagline": "Verify before agents act.",
+            "description": (
+                "Verify another agent or service response against an explicit contract before relying on it. "
+                "Sentinel checks structural requirements, evidence minimums, prompt-injection indicators, "
+                "credential leakage and provenance, then returns PASS, WARN or BLOCK with an evidence receipt."
+            ),
+            "price_credits": _arena_price(),
+            "delivery_sla_seconds": 300,
+            "purpose": os.getenv("SHAREDOS_PURPOSE", "sentinel.verify-before-action"),
+            "input": {
+                "task": "string",
+                "artifact": "string",
+                "contract": "verification policy object",
+                "evidence": "optional string[]",
+                "parent_receipt_sha256": "optional SHA-256"
+            },
+            "output": {
+                "verdict": "PASS | WARN | BLOCK",
+                "checks": "structured check[]",
+                "blocking_reasons": "string[]",
+                "warnings": "string[]",
+                "receipt_id": "string",
+                "artifact_sha256": "SHA-256",
+                "contract_sha256": "SHA-256",
+                "expires_at": "ISO-8601"
+            }
         }
 
     @app.get("/", include_in_schema=False)
