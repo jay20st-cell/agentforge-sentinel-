@@ -18,8 +18,23 @@ from sentinel.receipt_codec import receipt_from_dict, serialized_receipt_is_vali
 from sentinel.schema_verifier import SchemaSentinelVerifier
 from sentinel.store import ReceiptStore
 
-APP_ROOT = Path(__file__).resolve().parents[2]
-WEB_INDEX = APP_ROOT / "web" / "index.html"
+
+def _resolve_web_index() -> Path:
+    """Locate the dashboard without assuming an editable source-tree install."""
+    override = os.getenv("SENTINEL_WEB_INDEX", "").strip()
+    candidates: list[Path] = []
+    if override:
+        candidates.append(Path(override).expanduser())
+    candidates.extend(
+        [
+            Path.cwd() / "web" / "index.html",
+            Path(__file__).resolve().parents[2] / "web" / "index.html",
+        ]
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return candidates[0].resolve()
 
 
 class PolicyInput(BaseModel):
@@ -77,6 +92,7 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
     receipt_store = store or ReceiptStore(os.getenv("SENTINEL_DB_PATH", "sentinel.db"))
     signing_key = os.getenv("SENTINEL_SIGNING_KEY", "").strip() or None
     verifier = SchemaSentinelVerifier(signing_key=signing_key)
+    web_index = _resolve_web_index()
 
     app = FastAPI(
         title="AgentForge Sentinel",
@@ -109,6 +125,7 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
             "signed_receipts": signing_key is not None,
             "json_schema": True,
             "proof_before_action": True,
+            "dashboard_installed": web_index.is_file(),
         }
 
     @app.get("/v1/service", tags=["system"])
@@ -150,9 +167,9 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def dashboard() -> FileResponse:
-        if not WEB_INDEX.exists():
+        if not web_index.is_file():
             raise HTTPException(status_code=503, detail="Sentinel dashboard is not installed")
-        return FileResponse(WEB_INDEX)
+        return FileResponse(web_index)
 
     @app.post(
         "/v1/verify",
