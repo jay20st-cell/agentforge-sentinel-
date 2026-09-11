@@ -4,7 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     SENTINEL_HOST=0.0.0.0 \
     SENTINEL_PORT=8080 \
-    SENTINEL_DB_PATH=/data/sentinel.db
+    SENTINEL_DB_PATH=/data/sentinel.db \
+    SENTINEL_WEB_INDEX=/app/web/index.html
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
