@@ -43,3 +43,6 @@ jobs:
         run: npm install --ignore-scripts --no-audit --no-fund
       - name: Validate bridge syntax
         run: node --check src/run-turn.mjs && node --check src/check-config.mjs
+      - name: Validate web console JavaScript
+        working-directory: .
+        run: node -e 'const fs=require("fs"); const html=fs.readFileSync("web/index.html","utf8"); const match=html.match(/<script>([\s\S]*?)<\/script>/); if(!match) throw new Error("inline script missing"); new Function(match[1]); console.log("web console syntax ok");'
