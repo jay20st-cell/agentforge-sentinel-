@@ -6,13 +6,14 @@ import os
 import secrets
 import uuid
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from sentinel.core import SentinelVerifier, VerificationPolicy, VerificationRequest
+from sentinel.core import VerificationPolicy, VerificationRequest
+from sentinel.schema_verifier import SchemaSentinelVerifier
 from sentinel.store import ReceiptStore
 
 APP_ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +30,7 @@ class PolicyInput(BaseModel):
     block_on_prompt_injection: bool = True
     block_on_secret_exposure: bool = True
     receipt_ttl_seconds: int = Field(default=3600, ge=60, le=86_400)
+    json_schema: dict[str, Any] | None = None
 
 
 class VerifyInput(BaseModel):
@@ -62,7 +64,7 @@ def _arena_price() -> int:
 def create_app(store: ReceiptStore | None = None) -> FastAPI:
     receipt_store = store or ReceiptStore(os.getenv("SENTINEL_DB_PATH", "sentinel.db"))
     signing_key = os.getenv("SENTINEL_SIGNING_KEY", "").strip() or None
-    verifier = SentinelVerifier(signing_key=signing_key)
+    verifier = SchemaSentinelVerifier(signing_key=signing_key)
 
     app = FastAPI(
         title="AgentForge Sentinel",
@@ -71,7 +73,7 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
             "Pre-execution verification for autonomous-agent artifacts. "
             "Sentinel produces deterministic PASS/WARN/BLOCK verdicts and evidence receipts."
         ),
-        version="0.1.0",
+        version="0.2.0",
         redoc_url=None,
     )
 
@@ -92,6 +94,7 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
             "service": "agentforge-sentinel",
             "verifier": verifier.VERSION,
             "signed_receipts": signing_key is not None,
+            "json_schema": True,
         }
 
     @app.get("/v1/service", tags=["system"])
@@ -102,8 +105,8 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
             "tagline": "Verify before agents act.",
             "description": (
                 "Verify another agent or service response against an explicit contract before relying on it. "
-                "Sentinel checks structural requirements, evidence minimums, prompt-injection indicators, "
-                "credential leakage and provenance, then returns PASS, WARN or BLOCK with an evidence receipt."
+                "Sentinel checks JSON Schema and structural requirements, evidence minimums, prompt-injection "
+                "indicators, credential leakage and provenance, then returns PASS, WARN or BLOCK with an evidence receipt."
             ),
             "price_credits": _arena_price(),
             "delivery_sla_seconds": 300,
@@ -111,9 +114,9 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
             "input": {
                 "task": "string",
                 "artifact": "string",
-                "contract": "verification policy object",
+                "contract": "verification policy object; optional JSON Schema",
                 "evidence": "optional string[]",
-                "parent_receipt_sha256": "optional SHA-256"
+                "parent_receipt_sha256": "optional SHA-256",
             },
             "output": {
                 "verdict": "PASS | WARN | BLOCK",
@@ -123,8 +126,8 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
                 "receipt_id": "string",
                 "artifact_sha256": "SHA-256",
                 "contract_sha256": "SHA-256",
-                "expires_at": "ISO-8601"
-            }
+                "expires_at": "ISO-8601",
+            },
         }
 
     @app.get("/", include_in_schema=False)
@@ -140,7 +143,8 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
     )
     def verify(payload: VerifyInput) -> dict:
         try:
-            policy = VerificationPolicy.from_mapping(payload.contract.model_dump())
+            raw_contract = payload.contract.model_dump(exclude={"json_schema"})
+            policy = VerificationPolicy.from_mapping(raw_contract)
             receipt = verifier.verify(
                 VerificationRequest(
                     task=payload.task,
@@ -149,7 +153,8 @@ def create_app(store: ReceiptStore | None = None) -> FastAPI:
                     evidence=tuple(payload.evidence),
                     audit_trace=payload.audit_trace,
                     parent_receipt_sha256=payload.parent_receipt_sha256,
-                )
+                ),
+                json_schema=payload.contract.json_schema,
             )
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
