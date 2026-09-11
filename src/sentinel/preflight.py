@@ -25,6 +25,7 @@ class Finding:
 
 
 REQUIRED_STATIC_FILES = (
+    ".dockerignore",
     "README.md",
     "SECURITY.md",
     "Dockerfile",
@@ -34,8 +35,12 @@ REQUIRED_STATIC_FILES = (
     "docs/DEVPOST_SUBMISSION.md",
     "docs/DEMO_SCRIPT.md",
     "docs/GRANT_MAP.md",
+    "docs/RELEASE_CHECKLIST.md",
+    "sharedos/package.json",
+    "sharedos/src/request.mjs",
     "sharedos/src/run-turn.mjs",
     "sharedos/src/check-config.mjs",
+    "sharedos/src/contract-check.mjs",
 )
 
 REQUIRED_ARENA_ENV = (
