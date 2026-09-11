@@ -32,7 +32,7 @@ class SchemaSentinelVerifier(SentinelVerifier):
     receipt as every other Sentinel check.
     """
 
-    VERSION = "sentinel-core/0.4.0"
+    VERSION = "sentinel-core/0.3.0"
 
     def verify(
         self,
