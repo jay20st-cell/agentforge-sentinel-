@@ -44,7 +44,46 @@ jobs:
       - name: Install SharedOS bridge
         run: npm install --ignore-scripts --no-audit --no-fund
       - name: Validate bridge syntax
-        run: node --check src/run-turn.mjs && node --check src/check-config.mjs
+        run: node --check src/run-turn.mjs && node --check src/request.mjs && node --check src/check-config.mjs && node --check src/contract-check.mjs
+      - name: Validate generated turn against SharedOS contract
+        run: npm run contract-check
       - name: Validate web console JavaScript
         working-directory: .
         run: node -e 'const fs=require("fs"); const html=fs.readFileSync("web/index.html","utf8"); const match=html.match(/<script>([\s\S]*?)<\/script>/); if(!match) throw new Error("inline script missing"); new Function(match[1]); console.log("web console syntax ok");'
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t agentforge-sentinel:ci .
+      - name: Boot container and smoke-test API
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'docker rm -f sentinel-ci >/dev/null 2>&1 || true' EXIT
+          docker run -d --name sentinel-ci \
+            -e SENTINEL_SIGNING_KEY=ci-signing-key-0123456789-abcdef \
+            -p 18080:8080 \
+            agentforge-sentinel:ci
+
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:18080/health >/tmp/health.json; then
+              break
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              docker logs sentinel-ci
+              exit 1
+            fi
+            sleep 1
+          done
+
+          grep -q '"status":"ok"' /tmp/health.json
+
+          curl --fail --silent \
+            -H 'Content-Type: application/json' \
+            -d '{"task":"Return a structured decision","artifact":"{\"decision\":\"approve\",\"reason\":\"policy matched\"}","contract":{"require_json":true,"required_json_fields":["decision","reason"]}}' \
+            http://127.0.0.1:18080/v1/verify >/tmp/verify.json
+
+          grep -q '"verdict":"PASS"' /tmp/verify.json
+          grep -q '"signature_hmac_sha256"' /tmp/verify.json
