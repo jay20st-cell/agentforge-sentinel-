@@ -19,7 +19,9 @@ def test_serialized_signed_receipt_is_valid():
 def test_tampered_trust_boundary_is_rejected():
     payload = _signed_payload()
     tampered = deepcopy(payload)
-    tampered["not_verified"][0] = "Everything in this artifact is definitely true."
+    altered = list(tampered["not_verified"])
+    altered[0] = "Everything in this artifact is definitely true."
+    tampered["not_verified"] = altered
     assert not serialized_receipt_is_valid(tampered, signing_key="x" * 32, require_current=False)
 
 
