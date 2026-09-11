@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentforge-sentinel"
-version = "0.1.0"
+version = "0.3.0"
 description = "Pre-execution trust firewall for autonomous agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +25,7 @@ dev = [
 
 [project.scripts]
 sentinel = "sentinel.api:run"
+sentinel-preflight = "sentinel.preflight:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
