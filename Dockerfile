@@ -1,0 +1,19 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    SENTINEL_HOST=0.0.0.0 \
+    SENTINEL_PORT=8080 \
+    SENTINEL_DB_PATH=/data/sentinel.db
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY web ./web
+RUN python -m pip install --no-cache-dir .
+
+RUN useradd --create-home --uid 10001 sentinel && mkdir -p /data && chown -R sentinel:sentinel /data /app
+USER sentinel
+
+EXPOSE 8080
+CMD ["sentinel"]
