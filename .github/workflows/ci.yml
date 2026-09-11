@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -26,3 +26,20 @@ jobs:
         run: python -m pip install -e '.[dev]'
       - name: Test
         run: pytest
+
+  sharedos:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sharedos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.11"
+          cache: npm
+          cache-dependency-path: sharedos/package.json
+      - name: Install SharedOS bridge
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Validate bridge syntax
+        run: node --check src/run-turn.mjs && node --check src/check-config.mjs
