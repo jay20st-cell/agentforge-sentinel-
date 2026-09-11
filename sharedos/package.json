@@ -1,0 +1,13 @@
+{
+  "name": "agentforge-sentinel-sharedos",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=20.11"},
+  "scripts": {
+    "turn": "node src/run-turn.mjs",
+    "check": "node src/check-config.mjs"
+  },
+  "dependencies": {
+    "@aicoo/sharedos": "0.1.0-alpha.5"
+  }
+}
