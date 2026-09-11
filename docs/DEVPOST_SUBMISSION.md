@@ -95,6 +95,10 @@ Configurable through `SHAREDOS_PURPOSE`.
 
 `https://github.com/jay20st-cell/agentforge-sentinel-`
 
+## Team lead Discord username
+
+`[TEAM LEAD DISCORD USERNAME]`
+
 ## SharedOS architecture
 
 Sentinel separates **artifact trust** from **agent authority**.
@@ -127,6 +131,7 @@ SharedOS remains the authority boundary. Sentinel does not pretend that a PASS r
 - receipt expiry;
 - optional HMAC deployment signatures;
 - receipt lineage;
+- persisted receipt semantic validation before execution gating;
 - raw artifacts are not retained by default;
 - no claim of external factual truth unless that evidence is itself independently established;
 - downstream execution remains separately authorized by the host / SharedOS layer.
