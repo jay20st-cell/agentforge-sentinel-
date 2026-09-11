@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build production image
         run: docker build -t agentforge-sentinel:ci .
-      - name: Boot container and smoke-test API
+      - name: Boot container and smoke-test launch flow
         shell: bash
         run: |
           set -euo pipefail
@@ -68,7 +68,7 @@ jobs:
             agentforge-sentinel:ci
 
           for attempt in {1..20}; do
-            if curl --fail --silent http://127.0.0.1:18080/health >/tmp/health.json; then
+            if curl --fail --silent http://127.0.0.1:18080/health >/dev/null; then
               break
             fi
             if [ "$attempt" -eq 20 ]; then
@@ -78,12 +78,79 @@ jobs:
             sleep 1
           done
 
-          grep -q '"status":"ok"' /tmp/health.json
+          python3 - <<'PY'
+          import json
+          import urllib.request
 
-          curl --fail --silent \
-            -H 'Content-Type: application/json' \
-            -d '{"task":"Return a structured decision","artifact":"{\"decision\":\"approve\",\"reason\":\"policy matched\"}","contract":{"require_json":true,"required_json_fields":["decision","reason"]}}' \
-            http://127.0.0.1:18080/v1/verify >/tmp/verify.json
+          base = "http://127.0.0.1:18080"
 
-          grep -q '"verdict":"PASS"' /tmp/verify.json
-          grep -q '"signature_hmac_sha256"' /tmp/verify.json
+          def get(path):
+              with urllib.request.urlopen(base + path, timeout=5) as response:
+                  return response.status, response.read(), response.headers
+
+          def post(path, payload):
+              request = urllib.request.Request(
+                  base + path,
+                  data=json.dumps(payload).encode("utf-8"),
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+              with urllib.request.urlopen(request, timeout=5) as response:
+                  return response.status, json.load(response), response.headers
+
+          status, raw_health, _ = get("/health")
+          health = json.loads(raw_health)
+          assert status == 200
+          assert health["status"] == "ok"
+          assert health["signed_receipts"] is True
+          assert health["dashboard_installed"] is True
+
+          status, dashboard, headers = get("/")
+          assert status == 200
+          html = dashboard.decode("utf-8")
+          assert "AgentForge Sentinel" in html
+          assert "Execution Gate" in html
+          assert headers.get("X-Content-Type-Options") == "nosniff"
+
+          artifact = '{"decision":"approve","reason":"policy matched"}'
+          status, receipt, _ = post(
+              "/v1/verify",
+              {
+                  "task": "Return a structured decision",
+                  "artifact": artifact,
+                  "contract": {
+                      "require_json": True,
+                      "required_json_fields": ["decision", "reason"],
+                  },
+              },
+          )
+          assert status == 200
+          assert receipt["verdict"] == "PASS"
+          assert receipt["signature_hmac_sha256"]
+
+          status, gate, _ = post(
+              "/v1/gate",
+              {
+                  "receipt_id": receipt["receipt_id"],
+                  "artifact": artifact,
+                  "require_signed": True,
+              },
+          )
+          assert status == 200
+          assert gate["decision"] == "ALLOW"
+          assert gate["artifact_matches"] is True
+
+          status, mutated, _ = post(
+              "/v1/gate",
+              {
+                  "receipt_id": receipt["receipt_id"],
+                  "artifact": artifact + " ",
+                  "require_signed": True,
+              },
+          )
+          assert status == 200
+          assert mutated["decision"] == "BLOCK"
+          assert mutated["artifact_matches"] is False
+
+          print("production container launch flow ok")
+          PY
